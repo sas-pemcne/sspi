@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexbrainman/sspi"
-	"github.com/alexbrainman/sspi/ntlm"
+	"github.com/sas-pemcne/sspi"
+	"github.com/sas-pemcne/sspi/ntlm"
 )
 
 var (

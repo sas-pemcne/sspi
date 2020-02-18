@@ -9,7 +9,7 @@ package schannel
 import (
 	"io"
 
-	"github.com/alexbrainman/sspi"
+	"github.com/sas-pemcne/sspi"
 )
 
 type inputBuffer struct {

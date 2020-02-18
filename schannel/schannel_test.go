@@ -12,7 +12,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/alexbrainman/sspi/schannel"
+	"github.com/sas-pemcne/sspi/schannel"
 )
 
 func TestPackageInfo(t *testing.T) {

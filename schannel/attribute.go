@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/alexbrainman/sspi"
+	"github.com/sas-pemcne/sspi"
 )
 
 // TODO: maybe move all these into a separate package or something

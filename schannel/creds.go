@@ -11,7 +11,7 @@ package schannel
 import (
 	"unsafe"
 
-	"github.com/alexbrainman/sspi"
+	"github.com/sas-pemcne/sspi"
 )
 
 // TODO: add documentation

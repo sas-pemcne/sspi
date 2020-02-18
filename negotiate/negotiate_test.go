@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexbrainman/sspi"
-	"github.com/alexbrainman/sspi/negotiate"
+	"github.com/sas-pemcne/sspi"
+	"github.com/sas-pemcne/sspi/negotiate"
 )
 
 var (
