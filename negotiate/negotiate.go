@@ -9,6 +9,9 @@
 package negotiate
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"syscall"
 	"time"
@@ -80,6 +83,40 @@ func AcquireUserCredentials(domain, username, password string) (*sspi.Credential
 	return acquireCredentials("", sspi.SECPKG_CRED_OUTBOUND, &ai)
 }
 
+// GenerateChannelBindings generates the channel binding token given the server
+// certificate. This is needed to authenticate servers with EPA.
+// Takes the server certificate and uses that to hash the cert and build a SecBuffer
+// which is returned.
+func GenerateChannelBindings(cert []byte) (channelBinding *sspi.SecBuffer, err error) {
+	// TODO: Follow the RFC for signature detection
+	hash := sha256.New()
+	hash.Write(cert)
+	applicationData := append([]byte("tls-server-end-point:"), hash.Sum(nil)...)
+	// Now we need to construct a byte array that looks like a SecPkgContext_Bindings structure
+	buf := new(bytes.Buffer)
+	// This will mimic a SEC_CHANNEL_BINDINGS object
+	var secChannelBindings = []interface{}{
+		uint32(0),                    // dwInitiatorAddrType
+		uint32(0),                    // cbInitiatorLength
+		uint32(0),                    // dwInitiatorOffset
+		uint32(0),                    // dwAcceptorAddrType
+		uint32(0),                    // cbAcceptorLength
+		uint32(0),                    // dwAcceptorOffset
+		uint32(len(applicationData)), // cbApplicationDataLength
+		uint32(32),                   // dwApplicationDataOffset
+		applicationData,              // actual application data
+	}
+	for _, v := range secChannelBindings {
+		err := binary.Write(buf, binary.LittleEndian, v)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var cbt sspi.SecBuffer
+	cbt.Set(sspi.SECBUFFER_CHANNEL_BINDINGS, buf.Bytes())
+	return &cbt, nil
+}
+
 // AcquireServerCredentials acquires server credentials that will
 // be used to authenticate clients.
 // The principalName parameter is passed to the underlying call to
@@ -93,27 +130,39 @@ func AcquireServerCredentials(principalName string) (*sspi.Credentials, error) {
 	return acquireCredentials(principalName, sspi.SECPKG_CRED_INBOUND, nil)
 }
 
-func updateContext(c *sspi.Context, dst, src []byte, targetName *uint16) (authCompleted bool, n int, err error) {
-	var inBuf, outBuf [1]sspi.SecBuffer
-	inBuf[0].Set(sspi.SECBUFFER_TOKEN, src)
-	inBufs := &sspi.SecBufferDesc{
+func updateContext(c *sspi.Context, dst, src []byte, targetName *uint16, channelBindings *sspi.SecBuffer) (authCompleted bool, n int, err error) {
+	var inBufs [2]sspi.SecBuffer
+	var outBufs [1]sspi.SecBuffer
+	var bufferCount uint32 = 0
+
+	// If channelBindings was passed in, add that to the SecBuffer array
+	if channelBindings != nil {
+		inBufs[bufferCount] = *channelBindings
+		bufferCount++
+	}
+
+	inBufs[bufferCount].Set(sspi.SECBUFFER_TOKEN, src)
+	bufferCount++
+
+	inBuf := &sspi.SecBufferDesc{
+		Version:      sspi.SECBUFFER_VERSION,
+		BuffersCount: bufferCount,
+		Buffers:      &inBufs[0],
+	}
+
+	outBufs[0].Set(sspi.SECBUFFER_TOKEN, dst)
+	outBuf := &sspi.SecBufferDesc{
 		Version:      sspi.SECBUFFER_VERSION,
 		BuffersCount: 1,
-		Buffers:      &inBuf[0],
+		Buffers:      &outBufs[0],
 	}
-	outBuf[0].Set(sspi.SECBUFFER_TOKEN, dst)
-	outBufs := &sspi.SecBufferDesc{
-		Version:      sspi.SECBUFFER_VERSION,
-		BuffersCount: 1,
-		Buffers:      &outBuf[0],
-	}
-	ret := c.Update(targetName, outBufs, inBufs)
+	ret := c.Update(targetName, outBuf, inBuf)
 	switch ret {
 	case sspi.SEC_E_OK:
 		// session established -> return success
-		return true, int(outBuf[0].BufferSize), nil
+		return true, int(outBufs[0].BufferSize), nil
 	case sspi.SEC_I_COMPLETE_NEEDED, sspi.SEC_I_COMPLETE_AND_CONTINUE:
-		ret = sspi.CompleteAuthToken(c.Handle, outBufs)
+		ret = sspi.CompleteAuthToken(c.Handle, outBuf)
 		if ret != sspi.SEC_E_OK {
 			return false, 0, ret
 		}
@@ -121,7 +170,7 @@ func updateContext(c *sspi.Context, dst, src []byte, targetName *uint16) (authCo
 	default:
 		return false, 0, ret
 	}
-	return false, int(outBuf[0].BufferSize), nil
+	return false, int(outBufs[0].BufferSize), nil
 }
 
 func makeSignature(c *sspi.Context, msg []byte, qop, seqno uint32) ([]byte, error) {
@@ -216,8 +265,8 @@ type ClientContext struct {
 // negotiation sequence. targetName is the service principal name
 // (SPN) or the security context of the destination server.
 // NewClientContext returns a new token to be sent to the server.
-func NewClientContext(cred *sspi.Credentials, targetName string) (cc *ClientContext, outputToken []byte, err error) {
-	return NewClientContextWithFlags(cred, targetName, sspi.ISC_REQ_CONNECTION)
+func NewClientContext(cred *sspi.Credentials, targetName string, channelBindings *sspi.SecBuffer) (cc *ClientContext, outputToken []byte, err error) {
+	return NewClientContextWithFlags(cred, targetName, sspi.ISC_REQ_CONNECTION, channelBindings)
 }
 
 // NewClientContextWithFlags creates a new client context. It uses client
@@ -228,7 +277,7 @@ func NewClientContext(cred *sspi.Credentials, targetName string) (cc *ClientCont
 // The flags parameter is used to indicate requests for the context
 // (for example sspi.ISC_REQ_CONFIDENTIALITY|sspi.ISC_REQ_REPLAY_DETECT)
 // NewClientContextWithFlags returns a new token to be sent to the server.
-func NewClientContextWithFlags(cred *sspi.Credentials, targetName string, flags uint32) (cc *ClientContext, outputToken []byte, err error) {
+func NewClientContextWithFlags(cred *sspi.Credentials, targetName string, flags uint32, channelBindings *sspi.SecBuffer) (cc *ClientContext, outputToken []byte, err error) {
 	var tname *uint16
 	if len(targetName) > 0 {
 		p, err2 := syscall.UTF16FromString(targetName)
@@ -242,7 +291,7 @@ func NewClientContextWithFlags(cred *sspi.Credentials, targetName string, flags 
 	otoken := make([]byte, PackageInfo.MaxToken)
 	c := sspi.NewClientContext(cred, flags)
 
-	authCompleted, n, err2 := updateContext(c, otoken, nil, tname)
+	authCompleted, n, err2 := updateContext(c, otoken, nil, tname, channelBindings)
 	if err2 != nil {
 		return nil, nil, err2
 	}
@@ -277,7 +326,7 @@ func (c *ClientContext) Expiry() time.Time {
 // sent to the server.
 func (c *ClientContext) Update(token []byte) (authCompleted bool, outputToken []byte, err error) {
 	otoken := make([]byte, PackageInfo.MaxToken)
-	authDone, n, err2 := updateContext(c.sctxt, otoken, token, c.targetName)
+	authDone, n, err2 := updateContext(c.sctxt, otoken, token, c.targetName, nil)
 	if err2 != nil {
 		return false, nil, err2
 	}
@@ -353,7 +402,7 @@ type ServerContext struct {
 func NewServerContext(cred *sspi.Credentials, token []byte) (sc *ServerContext, authDone bool, outputToken []byte, err error) {
 	otoken := make([]byte, PackageInfo.MaxToken)
 	c := sspi.NewServerContext(cred, sspi.ASC_REQ_CONNECTION)
-	authDone, n, err2 := updateContext(c, otoken, token, nil)
+	authDone, n, err2 := updateContext(c, otoken, token, nil, nil)
 	if err2 != nil {
 		return nil, false, nil, err2
 	}
@@ -380,7 +429,7 @@ func (c *ServerContext) Expiry() time.Time {
 // sent to the client.
 func (c *ServerContext) Update(token []byte) (authCompleted bool, outputToken []byte, err error) {
 	otoken := make([]byte, PackageInfo.MaxToken)
-	authDone, n, err2 := updateContext(c.sctxt, otoken, token, nil)
+	authDone, n, err2 := updateContext(c.sctxt, otoken, token, nil, nil)
 	if err2 != nil {
 		return false, nil, err2
 	}

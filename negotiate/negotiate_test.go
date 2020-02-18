@@ -59,7 +59,7 @@ func testNegotiate(t *testing.T, clientCred *sspi.Credentials, SPN string) {
 	}
 	defer serverCred.Release()
 
-	client, toServerToken, err := negotiate.NewClientContext(clientCred, SPN)
+	client, toServerToken, err := negotiate.NewClientContext(clientCred, SPN, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestNegotiateFailure(t *testing.T) {
 	}
 	defer serverCred.Release()
 
-	client, toServerToken, err := negotiate.NewClientContext(clientCred, "HOST/UNKNOWN_HOST_NAME")
+	client, toServerToken, err := negotiate.NewClientContext(clientCred, "HOST/UNKNOWN_HOST_NAME", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestSignatureEncryption(t *testing.T) {
 	}
 	defer serverCred.Release()
 
-	client, toServerToken, err := negotiate.NewClientContext(clientCred, "")
+	client, toServerToken, err := negotiate.NewClientContext(clientCred, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestFlagVerification(t *testing.T) {
 		sspi.ISC_REQ_REPLAY_DETECT |
 		sspi.ISC_REQ_SEQUENCE_DETECT
 
-	client, toServerToken, err := negotiate.NewClientContextWithFlags(clientCred, "", desiredFlags)
+	client, toServerToken, err := negotiate.NewClientContextWithFlags(clientCred, "", desiredFlags, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,6 +408,23 @@ func TestFlagVerification(t *testing.T) {
 	}
 	if !serverDone {
 		t.Fatal("server authentication should be completed now")
+	}
+}
+
+func TestChannelBindings(t *testing.T) {
+	// Just use a random byte array for a sample
+	sampleCert := []byte{0, 130, 47, 116, 219, 9, 243, 115, 113, 252, 92, 2, 175, 213, 115, 140, 21, 96, 52, 94, 27, 64}
+	expected := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 53, 0, 0, 0, 32, 0, 0, 0,
+	                   116, 108, 115, 45, 115, 101, 114, 118, 101, 114, 45, 101, 110, 100, 45, 112, 111, 105, 110, 116,
+	                   58, 35, 214, 154, 220, 64, 185, 169, 240, 127, 2, 198, 159, 121, 64, 29, 188, 207, 100, 40, 250,
+	                   104, 33, 47, 168, 133, 56, 71, 98, 56, 200, 177, 0}
+	channelBindings, err := negotiate.GenerateChannelBindings(sampleCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindingBuffer := channelBindings.Bytes()
+	if !bytes.Equal(bindingBuffer, expected) {
+		t.Fatalf("Incorrect channel bindings bytes, expecting '%q' but got '%q'", expected, bindingBuffer)
 	}
 }
 

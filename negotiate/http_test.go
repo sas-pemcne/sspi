@@ -162,7 +162,7 @@ func TestNTLMHTTPClient(t *testing.T) {
 	}
 	defer cred.Release()
 
-	secctx, clientToken1, err := negotiate.NewClientContext(cred, "")
+	secctx, clientToken1, err := negotiate.NewClientContext(cred, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestKerberosHTTPClient(t *testing.T) {
 	}
 	defer cred.Release()
 
-	secctx, token, err := negotiate.NewClientContext(cred, targetName)
+	secctx, token, err := negotiate.NewClientContext(cred, targetName, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
